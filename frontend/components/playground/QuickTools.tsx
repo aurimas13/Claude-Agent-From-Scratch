@@ -181,7 +181,10 @@ function PlacePanel({
   const submit = () => {
     if (!city.trim()) return;
     if (kind === "weather") ask(`What's the weather in ${city.trim()} right now, and what's the forecast for the next 3 days?`);
-    else if (other.trim()) ask(`What time is it in ${city.trim()} and in ${other.trim()} right now? What's the time difference?`);
+    else if (other.trim()) {
+      const second = other.trim().replace(/^compare (it )?with\s+/i, "");
+      ask(`What time is it in ${city.trim()} and in ${second} right now? What's the time difference?`);
+    }
     else ask(`What time is it in ${city.trim()} right now?`);
   };
 
@@ -196,11 +199,11 @@ function PlacePanel({
       <input aria-label="City" className={inputClass} value={city} onChange={(e) => setCity(e.target.value)} placeholder="City, e.g. Paris" maxLength={100} />
       {kind === "time" && (
         <input
-          aria-label="Compare with another city (optional)"
+          aria-label="Second city to compare (optional)"
           className={inputClass}
           value={other}
           onChange={(e) => setOther(e.target.value)}
-          placeholder="Compare with… (optional)"
+          placeholder="Second city to compare, e.g. Vilnius (optional)"
           maxLength={100}
         />
       )}

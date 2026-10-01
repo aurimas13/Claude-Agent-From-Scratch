@@ -157,7 +157,9 @@ export function TurnView({ turn }: { turn: Turn }) {
             <div className="text-[15px] text-slate-800">
               {steps.length > 0 && <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">Answer</p>}
               <Markdown text={answerText} />
-              {live && <span className="ml-0.5 inline-block h-4 w-1.5 animate-blink bg-brand-500 align-middle" aria-hidden />}
+              {live && !answerText.includes("\n") && (
+                <span className="ml-0.5 inline-block h-4 w-1.5 animate-blink bg-brand-500 align-middle" aria-hidden />
+              )}
             </div>
           )}
           {turn.status === "error" && (
