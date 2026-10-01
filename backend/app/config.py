@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     # --- Abuse & cost protection ---
     allowed_origins: str = "http://localhost:3000"
     turnstile_secret_key: SecretStr | None = None
+    session_ttl_hours: int = 12
     ip_hash_salt: SecretStr = Field(default_factory=lambda: SecretStr(secrets.token_hex(16)))
     rate_limit_per_minute: int = 8
     rate_limit_per_day: int = 60

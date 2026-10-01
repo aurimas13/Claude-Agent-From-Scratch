@@ -29,7 +29,7 @@ from .agent import PROMPT_VERSION, Agent, window
 from .cache import cache_key, is_cacheable
 from .config import Settings, get_settings
 from .llm import build_anthropic
-from .security import RateLimiter, client_ip, hash_ip, verify_turnstile
+from .security import RateLimiter, SessionSigner, client_ip, hash_ip, verify_turnstile
 from .store import Store, build_store
 from .tools import ToolContext, build_tool_specs
 
@@ -50,6 +50,8 @@ async def lifespan(app: FastAPI):
     app.state.store = getattr(app.state, "store", None) or build_store(settings)
     app.state.llm = getattr(app.state, "llm", None) or build_anthropic(settings)
     app.state.limiter = RateLimiter(settings.rate_limit_per_minute, settings.rate_limit_per_day)
+    app.state.session_limiter = RateLimiter(per_minute=10, per_day=100)
+    app.state.sessions = SessionSigner(settings.ip_hash_salt.get_secret_value(), settings.session_ttl_hours * 3600)
     app.state.tool_specs = build_tool_specs(settings.enable_web_search, settings.web_search_max_uses)
     yield
     await app.state.store.aclose()
@@ -71,6 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.origins,
         allow_methods=["GET", "POST"],
+        allow_credentials=True,  # the human-verified session cookie
         allow_headers=["Content-Type"],
         max_age=600,
     )
@@ -93,7 +96,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     conversation_id: uuid.UUID | None = None
+
+
+class SessionRequest(BaseModel):
     turnstile_token: str | None = Field(default=None, max_length=4096)
+
+
+SESSION_COOKIE = "afs_session"
+
+
+def current_session(request: Request) -> tuple[str, int] | None:
+    return request.app.state.sessions.verify(request.cookies.get(SESSION_COOKIE))
+
+
+def require_session(request: Request) -> str:
+    session = current_session(request)
+    if not session:
+        raise HTTPException(401, "Please confirm you're human first.")
+    return session[0]
 
 
 def sse(event: dict[str, Any]) -> bytes:
@@ -131,6 +151,40 @@ def register_routes(app: FastAPI) -> None:
             "storage_ok": storage_ok,
         }
 
+    @app.get("/api/session")
+    async def get_session(request: Request) -> dict[str, Any]:
+        s: Settings = request.app.state.settings
+        session = current_session(request)
+        return {
+            "verified": session is not None,
+            "expires_at": session[1] if session else None,
+            "turnstile_required": bool(s.turnstile_secret_key),
+        }
+
+    @app.post("/api/session")
+    async def create_session(body: SessionRequest, request: Request) -> JSONResponse:
+        """One Cloudflare Turnstile check per visit -> a signed, HttpOnly session cookie."""
+        s: Settings = request.app.state.settings
+        ip = client_ip(request)
+        if request.app.state.session_limiter.check(hash_ip(ip, s.ip_hash_salt.get_secret_value())) is not None:
+            raise HTTPException(429, "Too many verification attempts - wait a minute and try again.")
+        if s.turnstile_secret_key and not await verify_turnstile(
+            body.turnstile_token, s.turnstile_secret_key.get_secret_value(), ip, request.app.state.http
+        ):
+            raise HTTPException(403, "Verification failed - please try again.")
+        token, expires = request.app.state.sessions.issue()
+        response = JSONResponse({"verified": True, "expires_at": expires})
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            max_age=s.session_ttl_hours * 3600,
+            httponly=True,
+            secure=s.is_production,
+            samesite="lax",
+            path="/api",
+        )
+        return response
+
     @app.get("/api/stats")
     async def stats(request: Request) -> dict[str, Any]:
         try:
@@ -142,6 +196,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/conversations/{conversation_id}")
     async def get_conversation(conversation_id: uuid.UUID, request: Request) -> dict[str, Any]:
+        require_session(request)
         store: Store = request.app.state.store
         if not await store.get_conversation(str(conversation_id)):
             raise HTTPException(404, "Conversation not found")
@@ -153,6 +208,7 @@ def register_routes(app: FastAPI) -> None:
         store: Store = request.app.state.store
         http: httpx.AsyncClient = request.app.state.http
 
+        require_session(request)
         message = body.message.strip()
         if not message or len(message) > s.max_message_chars:
             raise HTTPException(400, f"Message must be 1-{s.max_message_chars} characters.")
@@ -183,10 +239,6 @@ def register_routes(app: FastAPI) -> None:
                 if conversation.get("turn_count", 0) >= s.max_turns_per_conversation:
                     raise HTTPException(409, "This chat is full - start a new one.")
             else:
-                if s.turnstile_secret_key and not await verify_turnstile(
-                    body.turnstile_token, s.turnstile_secret_key.get_secret_value(), ip, http
-                ):
-                    raise HTTPException(403, "Bot check failed - refresh the page and try again.")
                 conversation_id = await store.create_conversation(ip_hash)
 
             history = await store.load_messages(conversation_id)

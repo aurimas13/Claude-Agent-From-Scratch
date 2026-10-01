@@ -11,7 +11,7 @@ export class ApiError extends Error {
 
 /** POST /api/chat and call onEvent for every Server-Sent Event the agent streams back. */
 export async function streamChat(
-  body: { message: string; conversation_id?: string | null; turnstile_token?: string | null },
+  body: { message: string; conversation_id?: string | null },
   onEvent: (event: AgentEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -19,6 +19,7 @@ export async function streamChat(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    credentials: "include", // sends the human-verified session cookie
     signal,
   });
   if (!response.ok || !response.body) {
@@ -51,10 +52,39 @@ export async function streamChat(
 }
 
 export async function fetchConversation(id: string): Promise<StoredTurn[] | null> {
-  const response = await fetch(`${API_URL}/api/conversations/${encodeURIComponent(id)}`);
+  const response = await fetch(`${API_URL}/api/conversations/${encodeURIComponent(id)}`, { credentials: "include" });
   if (!response.ok) return null;
   const data = (await response.json()) as { turns: StoredTurn[] };
   return data.turns;
+}
+
+export type SessionState = { verified: boolean; expires_at: number | null; turnstile_required: boolean };
+
+/** Is this browser already verified as human? (The cookie is HttpOnly, so we ask the API.) */
+export async function getSession(): Promise<SessionState> {
+  const response = await fetch(`${API_URL}/api/session`, { credentials: "include", cache: "no-store" });
+  if (!response.ok) throw new ApiError(`Session check failed (${response.status})`, response.status);
+  return response.json();
+}
+
+/** Trade a one-time Cloudflare Turnstile token for a signed 12-hour session cookie. */
+export async function startSession(turnstileToken: string | null): Promise<void> {
+  const response = await fetch(`${API_URL}/api/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ turnstile_token: turnstileToken }),
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let detail = `Verification failed (${response.status})`;
+    try {
+      const data = await response.json();
+      if (typeof data?.detail === "string") detail = data.detail;
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(detail, response.status);
+  }
 }
 
 export async function fetchStats(): Promise<{ questions_today: number; answered_from_cache: number } | null> {

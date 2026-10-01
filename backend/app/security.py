@@ -3,7 +3,7 @@
 Layers (cheapest first):
 1. Input limits        - message length, turns per conversation (pydantic + checks in main)
 2. Rate limits         - per visitor, per minute and per day (in-process sliding window)
-3. Bot check           - Cloudflare Turnstile, verified once per new conversation
+3. Bot check           - Cloudflare Turnstile once per visit, then a signed 12-hour session cookie
 4. Daily budget cap    - global USD ceiling from the usage log in Supabase
 Visitor IPs are never stored: only a salted SHA-256 hash is kept.
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import secrets
 import time
 from collections import defaultdict, deque
 
@@ -67,3 +68,36 @@ async def verify_turnstile(token: str | None, secret: str, ip: str, http: httpx.
         return bool(response.json().get("success"))
     except (httpx.HTTPError, ValueError):
         return False
+
+
+class SessionSigner:
+    """Stateless human-verified sessions: one Turnstile check, then a signed cookie.
+
+    Token = "v1.<random id>.<expiry unix>.<hmac>". Nothing is stored server-side; the HMAC key is
+    derived from IP_HASH_SALT, so rotating that secret logs every visitor out.
+    """
+
+    def __init__(self, secret: str, ttl_seconds: int) -> None:
+        self._key = hashlib.sha256(b"afs-session|" + secret.encode()).digest()
+        self.ttl = ttl_seconds
+
+    def _sign(self, payload: str) -> str:
+        return hmac.new(self._key, payload.encode(), hashlib.sha256).hexdigest()[:40]
+
+    def issue(self) -> tuple[str, int]:
+        expires = int(time.time()) + self.ttl
+        payload = f"v1.{secrets.token_urlsafe(16)}.{expires}"
+        return f"{payload}.{self._sign(payload)}", expires
+
+    def verify(self, token: str | None) -> tuple[str, int] | None:
+        """Return (session_id, expires) for a valid, unexpired token, else None."""
+        if not token or len(token) > 200:
+            return None
+        parts = token.split(".")
+        if len(parts) != 4 or parts[0] != "v1" or not parts[2].isdigit():
+            return None
+        payload = ".".join(parts[:3])
+        if not hmac.compare_digest(self._sign(payload), parts[3]):
+            return None
+        expires = int(parts[2])
+        return (parts[1], expires) if expires > time.time() else None

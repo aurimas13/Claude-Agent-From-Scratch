@@ -4,7 +4,9 @@ from app.security import RateLimiter, hash_ip
 from tests.conftest import make_app, msg, parse_sse, text, tool
 
 
-def ask(client, message, conversation_id=None, **extra):
+def ask(client, message, conversation_id=None, verify=True, **extra):
+    if verify and "afs_session" not in client.cookies:
+        client.post("/api/session", json={})
     body = {"message": message, **extra}
     if conversation_id:
         body["conversation_id"] = conversation_id
@@ -88,12 +90,33 @@ def test_rate_limit_returns_429():
         assert blocked.status_code == 429 and "Retry-After" in blocked.headers
 
 
-def test_turnstile_is_required_for_new_conversations_when_configured():
-    app = make_app([msg(text("ok"))], turnstile_secret_key="secret")
+def test_turnstile_is_checked_once_then_a_session_cookie_is_used():
+    app = make_app([msg(text("one")), msg(text("two"))], turnstile_secret_key="secret")
     with TestClient(app) as client:
-        assert ask(client, "hi").status_code == 403
-        assert ask(client, "hi", turnstile_token="bad-token").status_code == 403
-        assert ask(client, "hi", turnstile_token="good-token").status_code == 200
+        assert client.get("/api/session").json() == {"verified": False, "expires_at": None, "turnstile_required": True}
+        assert ask(client, "hi", verify=False).status_code == 401  # no session yet
+        assert client.post("/api/session", json={}).status_code == 403
+        assert client.post("/api/session", json={"turnstile_token": "bad-token"}).status_code == 403
+        ok = client.post("/api/session", json={"turnstile_token": "good-token"})
+        assert ok.status_code == 200
+        cookie = ok.headers["set-cookie"].lower()
+        assert "httponly" in cookie and "samesite=lax" in cookie and "path=/api" in cookie
+        assert client.get("/api/session").json()["verified"] is True
+        # no further Turnstile checks: every chat in the session just works
+        assert ask(client, "hi").status_code == 200
+        assert ask(client, "again").status_code == 200
+
+
+def test_forged_or_expired_sessions_are_rejected():
+    from app.security import SessionSigner
+
+    signer = SessionSigner("salt", ttl_seconds=60)
+    token, _ = signer.issue()
+    assert signer.verify(token)
+    assert signer.verify(token[:-1] + ("0" if token[-1] != "0" else "1")) is None
+    assert signer.verify("v1.abc.9999999999.deadbeef") is None
+    assert SessionSigner("other-salt", 60).verify(token) is None
+    assert SessionSigner("salt", ttl_seconds=-1).verify(SessionSigner("salt", -1).issue()[0]) is None
 
 
 def test_daily_budget_cap_blocks_requests():
@@ -129,6 +152,7 @@ def test_storage_outage_returns_503_with_cors_instead_of_a_bare_500():
 
     with TestClient(app) as client:
         app.state.store.usage_today = broken
+        client.post("/api/session", json={})
         r = client.post("/api/chat", json={"message": "hi"}, headers={"Origin": "https://agent.aurimas.io"})
         assert r.status_code == 503
         assert r.headers["access-control-allow-origin"] == "https://agent.aurimas.io"

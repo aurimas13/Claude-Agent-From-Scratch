@@ -36,7 +36,8 @@ The site also includes an **[explained-like-you're-five walkthrough](https://age
 | **Real tools** | Calculator that only accepts maths (no `eval`), Open-Meteo weather + geocoding + time zones, Anthropic web search, and save-note with download. |
 | **Persistent memory** | Full Claude message history in Postgres (Supabase), trimmed to a safe window that never orphans a `tool_result`. |
 | **Answer cache** | A repeated first question that used no time-sensitive tools is answered from the database instantly, at zero cost. |
-| **Cost and abuse controls** | Rate limits, Cloudflare Turnstile, a daily USD budget cap from a usage log, input caps and hashed IPs. See [SECURITY.md](SECURITY.md). |
+| **Human-verified sessions** | A one-time Cloudflare Turnstile check before the site loads. The API swaps it for a signed, HttpOnly, 12-hour session cookie, so visitors are checked once per visit, not once per question. |
+| **Cost and abuse controls** | Rate limits, a daily USD budget cap from a usage log, input caps and hashed IPs. See [SECURITY.md](SECURITY.md). |
 | **Production hygiene** | Typed settings, 39 offline tests with a fake Claude stream, a CI pipeline (ruff, pytest, eslint, tsc, build, gitleaks), Dependabot, a non-root Docker image and health checks. |
 
 ## Architecture
@@ -125,7 +126,7 @@ backend/                 Python agent (FastAPI)
   app/agent.py           the ReAct loop, streaming events
   app/tools/             calculator · weather · world time · notes (+ web_search spec)
   app/main.py            API: SSE chat, memory, cache, usage, limits
-  app/security.py        rate limiter, Turnstile, IP hashing
+  app/security.py        rate limiter, Turnstile, signed sessions, IP hashing
   app/store/             Supabase (httpx/PostgREST) + in-memory store
   app/cli.py             terminal chat
   tests/                 39 tests with a fake Claude stream (no network)

@@ -7,8 +7,8 @@ import { ApiError, applyEvent, fetchConversation, fetchStats, storedToTurn, stre
 import type { Turn } from "@/lib/types";
 import { Composer } from "./Composer";
 import { QuickTools } from "./QuickTools";
-import { Turnstile, type TurnstileHandle } from "./Turnstile";
 import { TurnView } from "./TurnView";
+import { useHumanGate } from "../HumanGate";
 
 const STORAGE_KEY = "afs.conversation";
 
@@ -49,7 +49,7 @@ export function Playground() {
   const [stats, setStats] = useState<{ questions_today: number; answered_from_cache: number } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const turnstile = useRef<TurnstileHandle>(null);
+  const { reverify } = useHumanGate();
 
   // Restore the previous conversation (memory lives in the database, keyed by this id).
   useEffect(() => {
@@ -79,7 +79,7 @@ export function Playground() {
       abortRef.current = controller;
       try {
         await streamChat(
-          { message, conversation_id: conversationId, turnstile_token: conversationId ? null : turnstile.current?.token() },
+          { message, conversation_id: conversationId },
           (event) => {
             if (event.type === "meta") {
               setConversationId(event.conversation_id);
@@ -103,15 +103,15 @@ export function Playground() {
           setConversationId(null);
           writeStoredId(null);
         }
+        if (err instanceof ApiError && err.status === 401) reverify(); // 12-hour session ended
       } finally {
-        turnstile.current?.reset();
         abortRef.current = null;
         setBusy(false);
         updateTurn(id, (t) => (t.status === "thinking" || t.status === "streaming" ? { ...t, status: "done" } : t));
         fetchStats().then(setStats);
       }
     },
-    [busy, conversationId, updateTurn],
+    [busy, conversationId, updateTurn, reverify],
   );
 
   const newChat = () => {
@@ -195,7 +195,6 @@ export function Playground() {
           )}
 
           <div ref={bottomRef} className={`z-10 mt-6 space-y-2 ${empty ? "" : "sticky bottom-4"}`}>
-            <Turnstile ref={turnstile} />
             <Composer busy={busy} onSend={send} onStop={() => abortRef.current?.abort()} />
           </div>
         </section>

@@ -174,7 +174,7 @@ const SAFETY = [
   { icon: KeyRound, title: "Keys stay on the server", text: "The Anthropic and Supabase secret keys live only on Railway. The browser never sees them." },
   { icon: Lock, title: "Database locked by default", text: "Row Level Security is on for every table, with no public rules, so only our API can read or write." },
   { icon: Timer, title: "Rate limits", text: "Each visitor gets a few questions a minute and a daily allowance. Visitor IPs are stored only as anonymous hashes." },
-  { icon: Bot, title: "Bot check", text: "Cloudflare Turnstile quietly checks that a new chat is started by a human." },
+  { icon: Bot, title: "One human check per visit", text: "Cloudflare Turnstile checks you once before the site opens. After that, a signed 12-hour session cookie means no more checks." },
   { icon: Wallet, title: "Daily budget cap", text: "Every question's cost is logged. Past the daily limit, the demo pauses until tomorrow." },
   { icon: ShieldCheck, title: "Untrusted text stays harmless", text: "Web pages are treated as data, never as instructions. Answers are shown as text, not HTML, so injected code can't run." },
 ];
