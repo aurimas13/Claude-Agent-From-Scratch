@@ -16,12 +16,18 @@ from typing import Any
 import httpx
 
 
+def project_url(url: str) -> str:
+    """Accept the project URL with or without a trailing /rest/v1 (both are shown in the dashboard)."""
+    url = url.strip().rstrip("/")
+    return url.removesuffix("/rest/v1").rstrip("/")
+
+
 class SupabaseStore:
     def __init__(self, url: str, secret_key: str, http: httpx.AsyncClient | None = None) -> None:
         headers = {"apikey": secret_key, "Content-Type": "application/json"}
         if secret_key.startswith("eyJ"):  # legacy JWT service_role key
             headers["Authorization"] = f"Bearer {secret_key}"
-        self._http = http or httpx.AsyncClient(base_url=f"{url.rstrip('/')}/rest/v1", headers=headers, timeout=10.0)
+        self._http = http or httpx.AsyncClient(base_url=f"{project_url(url)}/rest/v1", headers=headers, timeout=10.0)
 
     async def _get(self, path: str, params: dict[str, str]) -> list[dict[str, Any]]:
         response = await self._http.get(path, params=params)

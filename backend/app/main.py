@@ -111,15 +111,33 @@ def merge_trace(trace: list[dict[str, Any]], event: dict[str, Any]) -> None:
         trace.append(event)
 
 
+STORAGE_DOWN = "The agent's database isn't reachable right now. Please try again in a minute."
+
+
 def register_routes(app: FastAPI) -> None:
     @app.get("/api/health")
     async def health(request: Request) -> dict[str, Any]:
         s: Settings = request.app.state.settings
-        return {"status": "ok", "model": s.model, "storage": "supabase" if s.supabase_enabled else "memory"}
+        try:
+            await request.app.state.store.usage_today()
+            storage_ok = True
+        except Exception:
+            log.exception("storage check failed")
+            storage_ok = False
+        return {
+            "status": "ok",
+            "model": s.model,
+            "storage": "supabase" if s.supabase_enabled else "memory",
+            "storage_ok": storage_ok,
+        }
 
     @app.get("/api/stats")
     async def stats(request: Request) -> dict[str, Any]:
-        today = await request.app.state.store.usage_today()
+        try:
+            today = await request.app.state.store.usage_today()
+        except Exception as exc:
+            log.exception("stats unavailable")
+            raise HTTPException(503, STORAGE_DOWN) from exc
         return {"questions_today": today["requests"], "answered_from_cache": today["cache_hits"]}
 
     @app.get("/api/conversations/{conversation_id}")
@@ -148,28 +166,37 @@ def register_routes(app: FastAPI) -> None:
                 headers={"Retry-After": str(wait)},
             )
 
-        if (await store.usage_today())["cost_usd"] >= s.daily_budget_usd:
+        try:
+            spent = (await store.usage_today())["cost_usd"]
+        except Exception as exc:
+            log.exception("storage unavailable before chat")
+            raise HTTPException(503, STORAGE_DOWN) from exc
+        if spent >= s.daily_budget_usd:
             raise HTTPException(503, "The demo's daily budget is used up. Please come back tomorrow!")
 
-        if body.conversation_id:
-            conversation_id = str(body.conversation_id)
-            conversation = await store.get_conversation(conversation_id)
-            if not conversation:
-                raise HTTPException(404, "Conversation not found - start a new chat.")
-            if conversation.get("turn_count", 0) >= s.max_turns_per_conversation:
-                raise HTTPException(409, "This chat is full - start a new one.")
-        else:
-            if s.turnstile_secret_key and not await verify_turnstile(
-                body.turnstile_token, s.turnstile_secret_key.get_secret_value(), ip, http
-            ):
-                raise HTTPException(403, "Bot check failed - refresh the page and try again.")
-            conversation_id = await store.create_conversation(ip_hash)
+        try:
+            if body.conversation_id:
+                conversation_id = str(body.conversation_id)
+                conversation = await store.get_conversation(conversation_id)
+                if not conversation:
+                    raise HTTPException(404, "Conversation not found - start a new chat.")
+                if conversation.get("turn_count", 0) >= s.max_turns_per_conversation:
+                    raise HTTPException(409, "This chat is full - start a new one.")
+            else:
+                if s.turnstile_secret_key and not await verify_turnstile(
+                    body.turnstile_token, s.turnstile_secret_key.get_secret_value(), ip, http
+                ):
+                    raise HTTPException(403, "Bot check failed - refresh the page and try again.")
+                conversation_id = await store.create_conversation(ip_hash)
 
-        history = await store.load_messages(conversation_id)
-        first_turn = not history
+            history = await store.load_messages(conversation_id)
+            first_turn = not history
 
-        key = cache_key(message, s.model, PROMPT_VERSION)
-        cached = await store.cache_get(key, s.cache_ttl_hours) if (s.cache_enabled and first_turn) else None
+            key = cache_key(message, s.model, PROMPT_VERSION)
+            cached = await store.cache_get(key, s.cache_ttl_hours) if (s.cache_enabled and first_turn) else None
+        except httpx.HTTPError as exc:
+            log.exception("storage error before chat")
+            raise HTTPException(503, STORAGE_DOWN) from exc
 
         async def stream() -> AsyncIterator[bytes]:
             started = time.perf_counter()

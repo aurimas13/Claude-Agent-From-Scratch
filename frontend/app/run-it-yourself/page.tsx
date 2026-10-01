@@ -144,7 +144,7 @@ export default function RunItYourself() {
           Check everything works
         </h2>
         <div className="mt-4 space-y-3">
-          <CodeBlock code={"cd backend\npip install -e \".[dev]\"\npytest -q          # 37 tests, no API key or network needed"} path="Claude-Agent-From-Scratch/" />
+          <CodeBlock code={"cd backend\npip install -e \".[dev]\"\npytest -q          # 39 tests, no API key or network needed"} path="Claude-Agent-From-Scratch/" />
           <CodeBlock code={"cd frontend\nnpm run lint && npm run typecheck && npm run build"} path="Claude-Agent-From-Scratch/" />
         </div>
       </section>

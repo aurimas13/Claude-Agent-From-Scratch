@@ -117,3 +117,32 @@ def test_ip_hash_and_limiter_units():
     limiter = RateLimiter(per_minute=1, per_day=10)
     assert limiter.check("k") is None
     assert limiter.check("k") > 0
+
+
+def test_storage_outage_returns_503_with_cors_instead_of_a_bare_500():
+    import httpx
+
+    app = make_app([], allowed_origins="https://agent.aurimas.io")
+
+    async def broken(*args, **kwargs):
+        raise httpx.ConnectError("supabase down")
+
+    with TestClient(app) as client:
+        app.state.store.usage_today = broken
+        r = client.post("/api/chat", json={"message": "hi"}, headers={"Origin": "https://agent.aurimas.io"})
+        assert r.status_code == 503
+        assert r.headers["access-control-allow-origin"] == "https://agent.aurimas.io"
+        assert client.get("/api/stats").status_code == 503
+        assert client.get("/api/health").json()["storage_ok"] is False
+
+
+def test_supabase_url_accepts_rest_v1_suffix():
+    from app.store.supabase import project_url
+
+    for url in (
+        "https://x.supabase.co",
+        "https://x.supabase.co/",
+        "https://x.supabase.co/rest/v1",
+        "https://x.supabase.co/rest/v1/",
+    ):
+        assert project_url(url) == "https://x.supabase.co"

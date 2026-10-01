@@ -37,7 +37,7 @@ The site also includes an **[explained-like-you're-five walkthrough](https://age
 | **Persistent memory** | Full Claude message history in Postgres (Supabase), trimmed to a safe window that never orphans a `tool_result`. |
 | **Answer cache** | A repeated first question that used no time-sensitive tools is answered from the database instantly, at zero cost. |
 | **Cost and abuse controls** | Rate limits, Cloudflare Turnstile, a daily USD budget cap from a usage log, input caps and hashed IPs. See [SECURITY.md](SECURITY.md). |
-| **Production hygiene** | Typed settings, 37 offline tests with a fake Claude stream, a CI pipeline (ruff, pytest, eslint, tsc, build, gitleaks), Dependabot, a non-root Docker image and health checks. |
+| **Production hygiene** | Typed settings, 39 offline tests with a fake Claude stream, a CI pipeline (ruff, pytest, eslint, tsc, build, gitleaks), Dependabot, a non-root Docker image and health checks. |
 
 ## Architecture
 
@@ -83,7 +83,7 @@ make setup                 # venv + pip + npm, copies the .env examples
 make cli                   # 1) chat in the terminal
 make api                   # 2) API on :8000  (separate tab)
 make web                   # 3) website on :3000 (separate tab)
-make test                  # lint + 37 tests + type checks
+make test                  # lint + 39 tests + type checks
 ```
 
 <details>
@@ -128,7 +128,7 @@ backend/                 Python agent (FastAPI)
   app/security.py        rate limiter, Turnstile, IP hashing
   app/store/             Supabase (httpx/PostgREST) + in-memory store
   app/cli.py             terminal chat
-  tests/                 37 tests with a fake Claude stream (no network)
+  tests/                 39 tests with a fake Claude stream (no network)
 frontend/                Next.js 16 + Tailwind 4
   app/                   Playground · How it works (ELI5) · Run it yourself
   components/playground/ chat, step timeline, tool cards, quick tools
