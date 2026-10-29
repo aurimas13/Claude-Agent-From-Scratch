@@ -1,5 +1,5 @@
 # Runtime dependencies (mirrors pyproject.toml). Install dev tools with: pip install -e ".[dev]"
-anthropic>=1.11,<2
+anthropic>=1.11,<3
 fastapi>=0.120
 uvicorn[standard]>=0.34
 httpx>=0.28
